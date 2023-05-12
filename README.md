@@ -25,7 +25,30 @@ the filtered backpropagation
 [[2]](#DevaneyUI1982) for
 coherent plane-wave compounding.
 
-## References :notebook:
+## :gear: Getting Started
+
+1. Clone the repository or download the release to your local hard drive.
+
+```
+git clone https://github.com/mschiffn/fbp
+```
+
+2. Switch to the directory containing the repository
+
+3. Run the script example.m
+
+## Folder Structure
+
+The repository has the following structure:
+
+    .
+    ├── data_RF.mat     # measurement data from tissue phantom
+    ├── example.m       # main script
+    ├── fbp_pw.m        # filtered backpropagation (FBP) algorithm
+    ├── LICENSE         # license file
+    └── README.md       # this readme
+
+## :notebook: References
 
 1. <a name="SchiffnerAI2012"></a>
 M. F. Schiffner and G. Schmitz,
@@ -33,7 +56,7 @@ M. F. Schiffner and G. Schmitz,
 Acoust. Imaging, ser. Acoust. Imaging, A. Nowicki, J. Litniewski, and T. Kujawska, Eds., vol. 31, Springer Netherlands, 2012, pp. 19–30.
 [![DOI:10.1007/978-94-007-2619-2_3](https://img.shields.io/badge/DOI-10.1007%2F978--94--007--2619--2__3-blue)](https://doi.org/10.1007/978-94-007-2619-2_3)
 
-1. <a name="DevaneyUI1982"></a>
+2. <a name="DevaneyUI1982"></a>
 A. J. Devaney,
 "A filtered backpropagation algorithm for diffraction tomography,"
 Ultrasonic Imaging, vol. 4, no. 4, pp. 336–350, Oct. 1982.

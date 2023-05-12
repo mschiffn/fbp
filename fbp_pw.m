@@ -1,4 +1,4 @@
-function [ gamma_kappa_recon, gamma_kappa_recon_theta, gamma_kappa_recon_compensated, image_pos_x ] = fbp_pw( data_RF, A_in_td, f_lb, f_ub, A_in_analy_threshold_dB, samples_delta_x, image_pos_z, theta_incident, c_0, f_s, factor_interp, factor_zero_pad )
+function [ gamma_kappa_recon, gamma_kappa_recon_theta, image_pos_x ] = fbp_pw( element_pitch, positions_z, data_RF, f_s, theta_incident, c_0, f_bounds, A_in_td, A_in_analy_threshold_dB, factor_interp, factor_zero_pad )
 %
 % Filtered backpropagation (FBP) algorithm for
 % the RF data obtained from
@@ -14,243 +14,319 @@ function [ gamma_kappa_recon, gamma_kappa_recon_theta, gamma_kappa_recon_compens
 % the relative spatial fluctuations in
 % compressibility.
 %
+% minimal usage:
+% gamma_kappa_recon = fbp_pw( element_pitch, positions_z, data_RF, f_s, theta_incident, c_0 );
+%
+% -------------------------------------------------------------------------
 % INPUTS:
-%   data_RF 	% matrix of RF data
-%   A_in_td 	% incident pulse (waveform of incident PW)
-%   f_lb        % lower frequency bound
-%   f_ub        % upper frequency bound
-%   A_in_analy_threshold_dB % threshold for pseudo-inverse filter in dB (used for deconvolution with A_in_td)
-%   samples_delta_x % element pitch
-%   image_pos_z     % axial positions in image (m)
-%   theta_incident  % steering angles (rad)
-%   c_0
-%   f_s
-%   factor_interp
-%   factor_zero_pad
+% -------------------------------------------------------------------------
+%   01.) element_pitch:    element pitch (m)
+%   02.) positions_z:      axial positions in image (m)
+%   03.) data_RF:          matrix of RF data
+%   04.) f_s:              sampling frequency (Hz)
+%   05.) theta_incident:   steering angles (rad)    -> -pi/2, <- pi/2
+%   06.) c_0:              speed of sound (m/s)
 %
+% OPTIONAL
+%   07.) f_bounds:         frequency bounds (Hz)
+%   08.) A_in_td:          incident pulse (waveform of incident PW)
+%   09.) A_in_analy_threshold_dB: threshold for pseudo-inverse filter in dB (used for deconvolution with A_in_td)
+%   10.) factor_interp:
+%   11.) factor_zero_pad:
+%
+% -------------------------------------------------------------------------
 % OUTPUTS:
-%   gamma_kappa_recon = recovered compressibility fluctuations (1)
-%   gamma_kappa_recon_theta = recovered compressibility fluctuations for each propagation direction (1)
-%   gamma_kappa_recon_compensated = compensated recovered compressibility fluctuations (1)
-%   image_pos_x = lateral positions (m)
+% -------------------------------------------------------------------------
+%   01.) gamma_kappa_recon = recovered compressibility fluctuations (1)
+%   02.) gamma_kappa_recon_theta = recovered compressibility fluctuations for each propagation direction (1)
+%   03.) image_pos_x = lateral positions (m)
 %
+% -------------------------------------------------------------------------
 % REFERENCES:
-%	[1] M. F. Schiffner and G. Schmitz, “Plane wave pulse-echo ultrasound diffraction tomography with a fixed linear transducer array,” in
+% -------------------------------------------------------------------------
+%   [1] M. F. Schiffner and G. Schmitz, “Plane wave pulse-echo ultrasound diffraction tomography with a fixed linear transducer array,” in
 %       Acoust. Imaging, ser. Acoust. Imaging, A. Nowicki, J. Litniewski, and T. Kujawska, Eds., vol. 31, Springer Netherlands, 2012, pp. 19–30.
 %       DOI : 10.1007/978-94-007-2619-2_3
 %   [2] A. J. Devaney, “A filtered backpropagation algorithm for diffraction tomography,”
 %       Ultrasonic Imaging, vol. 4, no. 4, pp. 336–350, Oct. 1982.
 %       DOI : 10.1016/0161-7346(82)90017-7
 %
+% -------------------------------------------------------------------------
 % REMARKS:
+% -------------------------------------------------------------------------
+% - The two-dimensional space underestimates the diffraction-induced decay of the signals ( 1 / sqrt(R) vs 1 / R ).
+% - The finite aperture of the linear array acts as an undesired window function.
+%   The acoustic pressure outside the aperture is erroneously set to zero.
+%	- The compensation eliminates the effects of the finite aperture on the modulus of the image pixels.
 %	- It is unclear how to deal with the overlapping spectra in the compound image.
-%	- The compensation eliminates the effects of the finite aperture.
-%   - The two-dimensional space underestimates the diffraction-induced decay of the signals.
 %
-% author: Martin F. Schiffner
-% date: 2013-01-26
-% modified: 2020-09-09
+% -------------------------------------------------------------------------
+% ABOUT:
+% -------------------------------------------------------------------------
+%   author: Martin F. Schiffner
+%   date: 2013-01-26
+%   modified: 2023-05-02
 
-%% compute angular spectra for all relevant frequencies
+% print status
+time_start = tic;
+str_date_time = sprintf( '%04d-%02d-%02d: %02d:%02d:%02d', fix( clock ) );
+fprintf( '\t %s: Filtered Backpropagation (FBP) [ steered plane wave ]...\n', str_date_time );
 
-% number of samples in time domain (use odd number)
-N_samples_t = size(data_RF, 1);
-if mod(N_samples_t, 2) == 0
-    N_samples_t = N_samples_t + 1;
+%--------------------------------------------------------------------------
+% 1.) check arguments
+%--------------------------------------------------------------------------
+% ensure at least 6 and at most 11 arguments
+narginchk( 6, 11 );
+
+% ensure positive element_pitch
+mustBePositive( element_pitch );
+
+% ensure positive positions_z
+mustBePositive( positions_z );
+
+% ensure two- or three-dimensional array for data_RF
+if ndims( data_RF ) > 3
+	errorStruct.message = 'window must be windows.window!';
+    errorStruct.identifier = 'das_pw:NoWindow';
+    error( errorStruct );
 end
-% assertion: N_samples_t is odd
 
-% number of elements in spatial domain
-N_elements = size(data_RF, 2);
-M_elements = (N_elements - 1) / 2;
+% ensure at least two spatial positions and two samples
+if ~( size( data_RF, 1 ) > 1 && size( data_RF, 2 ) > 1  )
+    errorStruct.message = 'window must be windows.window!';
+    errorStruct.identifier = 'das_pw:NoWindow';
+    error( errorStruct );
+end
 
-% position of transmit receive elements
+% ensure positive f_s
+mustBePositive( f_s );
+
+% TODO: theta_incident
+
+% ensure positive c_0
+mustBePositive( c_0 );
+
+% ensure existence of nonempty index_t0
+% if nargin < 10 || isempty( index_t0 )
+% 	index_t0 = 0;
+% end
+
+% ensure existence of nonempty A_in_td
+if nargin < 8 || isempty( A_in_td )
+    A_in_td = 1;
+end
+
+% ensure existence of nonempty A_in_analy_threshold_dB
+if nargin < 9 || isempty( A_in_analy_threshold_dB )
+    A_in_analy_threshold_dB = 6;
+end
+
+% ensure existence of nonempty factor_interp
+if nargin < 10 || isempty( factor_interp )
+    factor_interp = 4;
+end
+
+% ensure existence of nonempty factor_zero_pad
+if nargin < 11 || isempty( factor_zero_pad )
+    factor_zero_pad = 1;
+end
+
+%--------------------------------------------------------------------------
+% 2.) time-frequency decomposition
+%--------------------------------------------------------------------------
+% number of samples in the time domain
+N_samples_t = size( data_RF, 1 );
+
+% number of points used in temporal DFT
+% TODO: zero padding?
+N_points_dft_t = N_samples_t;
+if mod( N_points_dft_t, 2 ) == 0
+    N_points_dft_t = N_points_dft_t + 1;
+end
+% assertion: N_points_dft_t is odd
+
+% boundary frequency indices
+index_Omega_lb = ceil( f_bounds( 1 ) * N_points_dft_t / f_s ) + 1;
+index_Omega_ub = floor( f_bounds( 2 ) * N_points_dft_t / f_s ) + 1;
+indices_Omega = (index_Omega_lb:index_Omega_ub).';
+
+% frequency axis
+axis_f_bp = f_s * ( indices_Omega - 1 ) / N_points_dft_t;
+axis_k_bp = 2 * pi * axis_f_bp / c_0;
+
+% number of relevant discrete frequencies
+N_samples_f = numel( indices_Omega );
+
+% compute frequency-continuous phasors
+data_RF_phasors = fft( data_RF, N_points_dft_t,  1 ) / ( sqrt( N_points_dft_t ) * f_s );
+data_RF_phasors_cropped = data_RF_phasors( indices_Omega, :, : );
+clear data_RF_phasors;
+
+% expected frequency-continuous spectrum of pressure wave
+A_in = fft( A_in_td, N_points_dft_t ) / ( sqrt( N_points_dft_t ) * f_s );
+A_in_analy_cropped = 2 * A_in( indices_Omega );
+
+%--------------------------------------------------------------------------
+% 3.) space-frequency decomposition
+%--------------------------------------------------------------------------
+% number of array elements
+N_elements = size( data_RF, 2 );
+M_elements = ( N_elements - 1 ) / 2;
+
+% number of points used in lateral DFT
+N_points_dft_x = factor_zero_pad * N_elements;
+if mod( N_points_dft_x, 2 ) == 0
+    N_points_dft_x = N_points_dft_x + 1;
+end
+% assertion: N_points_dft_x is odd
+
+N_zeros_padded = N_points_dft_x - N_elements;
+
+% centroids of element faces
 %(for even N_elements: no element in pos_rx_x == 0)
-pos_rx_x = (-M_elements:M_elements) * samples_delta_x;
-
-% logical number of samples used in DFT
-N_samples = factor_zero_pad * N_elements;
-M_samples = (N_samples - 1) / 2;
-N_zeros_padded = N_samples - N_elements;
-
-if mod(N_samples, 2) == 0
-    
-    N_samples = N_samples + 1;
-    M_samples = ceil(M_samples);
-    N_zeros_padded = N_zeros_padded + 1;
-end
-% assertion: N_samples is odd
-pos_rx_x = [pos_rx_x, pos_rx_x(end) + (1:N_zeros_padded) * samples_delta_x];
+% positions_ctr_x = (-M_elements:M_elements) * element_pitch;
+pos_rx_x = [ (-M_elements:M_elements), M_elements + (1:N_zeros_padded) ] * element_pitch;
 
 % axis of angular spatial frequencies
-axis_k_x = 2 * pi * (-M_samples:M_samples) / (N_samples * samples_delta_x);
+M_points_dft_x = ( N_points_dft_x - 1 ) / 2;
+axis_k_x = 2 * pi * (-M_points_dft_x:M_points_dft_x) / ( N_points_dft_x * element_pitch );
+
+% normalized spatial frequencies (direction vectors)
+mat_k_x_norm = axis_k_x ./ axis_k_bp;
+mat_k_z_norm = sqrt( 1 - mat_k_x_norm.^2 );
+
+% propagable plane waves (PWs)
+indicator_propagable = abs( mat_k_x_norm ) < 1;
+
+% compute frequency-continuous angular spectrum (correct phase shift caused by pos_rx_x(1) ~= 0)
+data_RF_phasors_cropped_ang_spec = fft( data_RF_phasors_cropped, N_points_dft_x, 2 ) * element_pitch / sqrt( N_points_dft_x );
+data_RF_phasors_cropped_ang_spec = fftshift( data_RF_phasors_cropped_ang_spec, 2 ) .* exp( -1j * axis_k_x * pos_rx_x( 1 ) );
+clear data_RF_phasors_cropped;
 
 % angles of incident plane waves
 N_theta = numel( theta_incident );
-e_theta = [ cos( theta_incident( : )' ); sin( theta_incident( : )' ) ];
+e_theta = [ sin( theta_incident( : )' ); cos( theta_incident( : )' ) ];
 
-%time frequency decomposition, frequency-continuous phasors
-data_RF_phasors = fft(data_RF, N_samples_t, 1) / (sqrt(N_samples_t) * f_s);
-
-%compute corresponding frequency axis
-axis_omega =  2 * pi * (0:(N_samples_t - 1)) * f_s / N_samples_t;
-
-% bandpass filter (only evaluate relevant frequencies)
-omega_lb = 2 * pi * f_lb;
-omega_ub = 2 * pi * f_ub;
-
-indicator_k = (axis_omega >= omega_lb) & (axis_omega <= omega_ub);
-axis_omega = axis_omega(indicator_k);
-axis_k_norm = axis_omega / c_0;
-
-N_samples_k = numel(axis_k_norm);
-
-% expected frequency-continuous spectrum of pressure wave
-A_in = fft(A_in_td, N_samples_t) / (sqrt(N_samples_t) * f_s);
-A_in_analy_cropped = 2 * A_in(indicator_k);
+% modify angular spectrum to account for steering angle (element that fires first)
+% check steering direction to find the element that fires first
+pos_rx_x_ref = repmat( pos_rx_x( 1 ), [ 1, N_theta ] ); % steering direction: first quadrant
+indicator = e_theta( 1, : ) < 0;
+pos_rx_x_ref( indicator ) = pos_rx_x( N_elements ); % steering direction: second quadrant
 
 A_in_analy_cropped_abs_max = max( abs( A_in_analy_cropped ) );
 A_in_analy_threshold = 10^(-A_in_analy_threshold_dB / 20) * A_in_analy_cropped_abs_max;
 
-filter_A_in_inv_pseudo = zeros(1, N_samples_k);
-indicator = abs(A_in_analy_cropped) > A_in_analy_threshold;
-filter_A_in_inv_pseudo(indicator) = 1 ./ A_in_analy_cropped(indicator);
-filter_A_in_inv_pseudo(~indicator) = abs(A_in_analy_cropped(~indicator)) ./ (A_in_analy_cropped(~indicator) * A_in_analy_threshold);
+filter_A_in_inv_pseudo = zeros( N_samples_f, 1 );
+indicator = abs( A_in_analy_cropped ) > A_in_analy_threshold;
+filter_A_in_inv_pseudo( indicator ) = 1 ./ A_in_analy_cropped(indicator);
+filter_A_in_inv_pseudo( ~indicator ) = abs(A_in_analy_cropped(~indicator)) ./ (A_in_analy_cropped(~indicator) * A_in_analy_threshold);
 
-figure(1);
-subplot(2,2,1);
-plot((1:N_samples_k), abs(filter_A_in_inv_pseudo));
-subplot(2,2,2);
-plot((1:N_samples_k), unwrap(angle(filter_A_in_inv_pseudo)));
-subplot(2,2,3);
-plot((1:N_samples_k), abs(filter_A_in_inv_pseudo .* A_in_analy_cropped));
-subplot(2,2,4);
-plot((1:N_samples_k), unwrap(angle(filter_A_in_inv_pseudo .* A_in_analy_cropped)));
+% figure(1);
+% subplot(2,2,1);
+% plot((1:N_samples_f), abs(filter_A_in_inv_pseudo));
+% subplot(2,2,2);
+% plot((1:N_samples_f), unwrap(angle(filter_A_in_inv_pseudo)));
+% subplot(2,2,3);
+% plot((1:N_samples_f), abs(filter_A_in_inv_pseudo .* A_in_analy_cropped));
+% subplot(2,2,4);
+% plot((1:N_samples_f), unwrap(angle(filter_A_in_inv_pseudo .* A_in_analy_cropped)));
 
-data_RF_phasors_cropped = data_RF_phasors(indicator_k, :, :);
-clear data_RF_phasors;
+%--------------------------------------------------------------------------
+% 4.) compute relative spatial fluctuations in compressibility
+%--------------------------------------------------------------------------
+% setup image geometry
+N_image_axis = [ factor_interp * N_points_dft_x, numel( positions_z ) ]; % number of lattice points on each axis
+M_image_axis = ( N_image_axis - 1 ) / 2;
 
-%compute frequency-continuous angular spectrum (correct phase shift caused by pos_rx_x(1) ~= 0)
-data_RF_phasors_cropped_ang_spec = fft(data_RF_phasors_cropped, N_samples, 2) * samples_delta_x / sqrt(N_samples);
-data_RF_phasors_cropped_ang_spec = fftshift(data_RF_phasors_cropped_ang_spec, 2) .* repmat(exp(-1j * axis_k_x * pos_rx_x(1)), [N_samples_k, 1, N_theta]);
-clear data_RF_phasors_cropped;
-
-%% create image using filtered backprojection for each frequency and each angle
-
-%setup image geometry
-N_image_axis = [factor_interp * N_samples, numel(image_pos_z)];   %number of lattice points on each axis
-M_image_axis = (N_image_axis - 1) / 2;
-
-image_delta_x = samples_delta_x / factor_interp;                  %spatial sampling interval in lateral direction
-image_pos_x = (-M_image_axis(1):M_image_axis(1)) * image_delta_x; %lateral positions
+image_delta_x = element_pitch / factor_interp; % spatial sampling interval in lateral direction
+image_pos_x = (-M_image_axis( 1 ):M_image_axis( 1 )) * image_delta_x; % lateral positions
 
 % allocate memory for results
 gamma_kappa_recon_theta = zeros( N_image_axis( 2 ), N_image_axis( 1 ), N_theta );
 
-%iterate over transmit angles
+% iterate steering angles
 for index_theta = 1:N_theta
 
-    fprintf('index_theta = %d of %d\n', index_theta, N_theta);
+    % print status
+    time_start_theta = tic;
+    fprintf( '\t\tsteering angle: %6.2f° (%d of %d)... ', rad2deg( theta_incident( index_theta ) ), index_theta, N_theta );
 
-    %TODO: window data in a smart way to utilize all measurements
-    %TODO: compare to added DAS
-    if 0
-    %assertion: N_theta >= 2
-        if index_theta == 1
-         
-            theta_lower_bound = 0;
-            theta_upper_bound = theta_incident(index_theta + 1);
-     
-        elseif index_theta == N_theta
-         
-            theta_lower_bound = theta_incident(index_theta - 1);
-            theta_upper_bound = pi;
-        else
-        
-            theta_lower_bound = theta_incident(index_theta - 1);
-            theta_upper_bound = theta_incident(index_theta + 1);
-        end
-    else
-          
-        theta_lower_bound = 0;
-        theta_upper_bound = pi;
-    end
-    
-    %modify angular spectrum to account for steering angle (element that fires first)
-    % check steering direction to find the element that fires first
-    if e_theta(1, index_theta) >= 0
-        % steering direction: first quadrant
-        pos_rx_x_ref = pos_rx_x(1);
-    else
-        % steering direction: second quadrant
-        % assertion: e_theta(1, index_theta) < 0
-        pos_rx_x_ref = pos_rx_x(N_elements);
-    end
+    % current propagation direction
+    e_theta_x_act = e_theta( 1, index_theta );
+    e_theta_z_act = e_theta( 2, index_theta );
 
-    %iterate over frequencies
-    for index_k = 1:N_samples_k
-        
-        tic;
-        fprintf('index_k = %d of %d...', index_k, N_samples_k);
-    
-        %compute filter kernel
-        k_x_over_k_0 = axis_k_x ./ axis_k_norm(index_k);
-        sqrt_k_x_over_k_0 = sqrt(1 - (k_x_over_k_0).^2);
-    
-        filter_1 = e_theta(1, index_theta) * k_x_over_k_0 + e_theta(2, index_theta) * sqrt_k_x_over_k_0 + 1;
-        
-        phase_pw = exp(1j * axis_k_norm(index_k) * (e_theta(1, index_theta) * repmat(image_pos_x - pos_rx_x_ref, [N_image_axis(2), 1]) + e_theta(2, index_theta) * repmat(image_pos_z', [1, N_image_axis(1)])) );
-        filter_2 = exp(1j * axis_k_norm(index_k) * repmat(image_pos_z',  [1, N_samples]) .* repmat(sqrt_k_x_over_k_0, [N_image_axis(2), 1]));
-        
-        %compute valid spatial frequencies for backpropagation
-        indicator_all = abs(axis_k_x) < axis_k_norm(index_k);
-                
-        indicator_unique_1 = axis_k_x < (axis_k_norm(index_k) * cos(theta_lower_bound));
-        indicator_unique_2 = axis_k_x > (axis_k_norm(index_k) * cos(theta_upper_bound));
-         
-        indicator_unique = indicator_unique_1 & indicator_unique_2;
-        indicator_multiple = indicator_all & ~indicator_unique;
-        
-        %indicator_lower = indicator_all & ~indicator_2;
-        %indicator_upper = indicator_all & ~indicator_1;
-        
-        if sum(indicator_unique) > 0
-            
-           % commit backpropagation
-           data_RF_phasors_cropped_ang_spec_filtered = zeros(1, N_samples);
-           data_RF_phasors_cropped_ang_spec_filtered(indicator_unique) = data_RF_phasors_cropped_ang_spec(index_k, indicator_unique, index_theta) .* filter_1(indicator_unique);
-           data_RF_phasors_cropped_ang_spec_filtered(indicator_multiple) = data_RF_phasors_cropped_ang_spec(index_k, indicator_multiple, index_theta) .* filter_1(indicator_multiple) / N_theta;
-           
-           % apply pseudo inverse filter
-           data_RF_phasors_cropped_ang_spec_filtered = data_RF_phasors_cropped_ang_spec_filtered * filter_A_in_inv_pseudo(index_k);
-           
-           gamma_kappa_recon_dft_shift = zeros(N_image_axis(2), N_samples);
-           gamma_kappa_recon_dft_shift(:, indicator_all) = repmat(data_RF_phasors_cropped_ang_spec_filtered(1,indicator_all), [N_image_axis(2), 1]) .* filter_2(:, indicator_all) / axis_k_norm(index_k);
-           gamma_kappa_recon_dft = ifftshift(gamma_kappa_recon_dft_shift, 2);
-           
-           %interpolate backpropagated image in frequency domain
-           gamma_kappa_recon_interp_dft = zeros(N_image_axis(2), N_image_axis(1));
-           
-           gamma_kappa_recon_interp_dft(:, 1:(M_samples + 1)) = gamma_kappa_recon_dft(:, 1:(M_samples + 1));   %zero insertion
-           gamma_kappa_recon_interp_dft(:, (N_image_axis(1) - M_samples + 1):end) = gamma_kappa_recon_dft(:, (M_samples + 2):end);
+    % current reference element
+	pos_rx_x_ref_act = pos_rx_x_ref( index_theta );
 
-           temp = fftshift(ifft(gamma_kappa_recon_interp_dft, [], 2), 2) .* phase_pw;
-           gamma_kappa_recon_theta(:,:,index_theta) = gamma_kappa_recon_theta(:,:,index_theta) + temp;
-         
-        end %if sum(indicator_unique) > 0
-        
-        time = toc;
-        fprintf('(%f ms)\n', time * 1000);
-    end %for index_k = 1:N_samples_k
-    
-end %for theta_act = 1:N_theta
+    % phasors
+    data_RF_phasors_cropped_ang_spec_act = data_RF_phasors_cropped_ang_spec( :, :, index_theta );
 
+    %----------------------------------------------------------------------
+    % a) filter fields
+    %----------------------------------------------------------------------
+    % compute filter kernel
+    filter = zeros( N_samples_f, N_points_dft_x );
+    filter( indicator_propagable ) = e_theta_x_act * mat_k_x_norm( indicator_propagable ) + e_theta_z_act * mat_k_z_norm( indicator_propagable ) + 1;
+
+    % apply filter
+    data_RF_phasors_cropped_ang_spec_filtered = zeros( N_samples_f, N_points_dft_x );
+    data_RF_phasors_cropped_ang_spec_filtered( indicator_propagable ) = data_RF_phasors_cropped_ang_spec_act( indicator_propagable ) .* filter( indicator_propagable );
+
+    % apply pseudo inverse filter
+    data_RF_phasors_cropped_ang_spec_filtered = data_RF_phasors_cropped_ang_spec_filtered .* filter_A_in_inv_pseudo;
+
+    % iterate axial positions
+    for index_pos_z = 1:N_image_axis( 2 )
+
+%         % print progress in percent
+%         if mod( index_pos_z, 20 ) == 0
+%             fprintf( '%5.1f %%', ( index_pos_z - 1 ) / N_image_axis( 2 ) * 1e2 );
+%         end
+
+        %------------------------------------------------------------------
+        % b) backpropagate filtered fields
+        %------------------------------------------------------------------
+        % compute propagator
+        propagator = exp( 1j * axis_k_bp .* mat_k_z_norm * positions_z( index_pos_z ) ) ./ axis_k_bp;
+
+        gamma_kappa_recon_dft_shift = zeros( N_samples_f, N_points_dft_x );
+        gamma_kappa_recon_dft_shift( indicator_propagable ) = data_RF_phasors_cropped_ang_spec_filtered( indicator_propagable ) .* propagator( indicator_propagable );
+        gamma_kappa_recon_dft = ifftshift( gamma_kappa_recon_dft_shift, 2 );
+
+        %------------------------------------------------------------------
+        % c) inverse transform
+        %------------------------------------------------------------------
+        % interpolate backpropagated image in frequency domain
+        gamma_kappa_recon_interp_dft = zeros( N_samples_f, N_image_axis( 1 ) );
+
+        % zero insertion
+        gamma_kappa_recon_interp_dft( :, 1:(M_points_dft_x + 1) ) = gamma_kappa_recon_dft( :, 1:(M_points_dft_x + 1) );	
+        gamma_kappa_recon_interp_dft( :, ( N_image_axis( 1 ) - M_points_dft_x + 1 ):end ) = gamma_kappa_recon_dft( :, (M_points_dft_x + 2):end );
+
+        % phase of incident plane wave
+        phase_pw = exp( 1j * axis_k_bp .* ( e_theta_x_act * ( image_pos_x - pos_rx_x_ref_act ) + e_theta_z_act * positions_z( index_pos_z ) ) );
+
+        temp = fftshift( ifft( gamma_kappa_recon_interp_dft, [], 2 ), 2 ) .* phase_pw;
+        gamma_kappa_recon_theta( index_pos_z, :, index_theta ) = sum( temp, 1 );
+
+%         % erase progress in percent
+%         if mod( index_pos_z, 20 ) == 0
+%             fprintf( '\b\b\b\b\b\b\b' );
+%         end
+
+    end % for index_pos_z = 1:N_image_axis( 2 )
+
+    % infer and print elapsed time
+    time_elapsed_theta = toc( time_start_theta );
+    fprintf( 'done! (%.3f s)\n', time_elapsed_theta );
+
+end % for index_theta = 1:N_theta
+
+% compound image
 gamma_kappa_recon = sum( gamma_kappa_recon_theta, 3 ) / N_theta;
 
-% compensate received power ratio in compound image
-[ image_pos_X, image_pos_Z ] = meshgrid( image_pos_x, image_pos_z );
+% infer and print elapsed time
+time_elapsed = toc( time_start );
+fprintf( '\t\tdone! (%.3f s)\n', time_elapsed );
 
-relative_power = (atan((pos_rx_x(N_elements) - image_pos_X) ./ image_pos_Z) - atan((pos_rx_x(1) - image_pos_X) ./ image_pos_Z)) / pi;
-gamma_kappa_recon_compensated = gamma_kappa_recon ./ sqrt(relative_power);
-
-
+end % function [ gamma_kappa_recon, gamma_kappa_recon_theta, image_pos_x ] = fbp_pw( element_pitch, positions_z, data_RF, f_s, theta_incident, c_0, f_bounds, A_in_td, A_in_analy_threshold_dB, factor_interp, factor_zero_pad )
