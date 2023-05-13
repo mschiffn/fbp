@@ -65,7 +65,7 @@ function [ gamma_kappa_recon, gamma_kappa_recon_theta, image_pos_x ] = fbp_pw( e
 % -------------------------------------------------------------------------
 %   author: Martin F. Schiffner
 %   date: 2013-01-26
-%   modified: 2023-05-02
+%   modified: 2023-05-12
 
 % print status
 time_start = tic;
@@ -86,30 +86,31 @@ mustBePositive( positions_z );
 
 % ensure two- or three-dimensional array for data_RF
 if ndims( data_RF ) > 3
-	errorStruct.message = 'window must be windows.window!';
-    errorStruct.identifier = 'das_pw:NoWindow';
+	errorStruct.message = 'data_RF must be a two- or three-dimensional array!';
+    errorStruct.identifier = 'fbp_pw:NoArray';
     error( errorStruct );
 end
 
 % ensure at least two spatial positions and two samples
 if ~( size( data_RF, 1 ) > 1 && size( data_RF, 2 ) > 1  )
-    errorStruct.message = 'window must be windows.window!';
-    errorStruct.identifier = 'das_pw:NoWindow';
+    errorStruct.message = 'data_RF must provide at least two temporal and two spatial samples!';
+    errorStruct.identifier = 'fbp_pw:NoSamples';
     error( errorStruct );
 end
 
 % ensure positive f_s
 mustBePositive( f_s );
 
-% TODO: theta_incident
+% ensure valid theta_incident
+mustBeInRange( theta_incident, - pi / 2, pi / 2 );
 
 % ensure positive c_0
 mustBePositive( c_0 );
 
-% ensure existence of nonempty index_t0
-% if nargin < 10 || isempty( index_t0 )
-% 	index_t0 = 0;
-% end
+% ensure existence of nonempty f_bounds
+if nargin < 7 || isempty( f_bounds )
+    f_bounds = [ 0, f_s / 2 ];
+end
 
 % ensure existence of nonempty A_in_td
 if nargin < 8 || isempty( A_in_td )
@@ -128,7 +129,7 @@ end
 
 % ensure existence of nonempty factor_zero_pad
 if nargin < 11 || isempty( factor_zero_pad )
-    factor_zero_pad = 1;
+    factor_zero_pad = 2;
 end
 
 %--------------------------------------------------------------------------
@@ -273,34 +274,33 @@ for index_theta = 1:N_theta
     data_RF_phasors_cropped_ang_spec_filtered( indicator_propagable ) = data_RF_phasors_cropped_ang_spec_act( indicator_propagable ) .* filter( indicator_propagable );
 
     % apply pseudo inverse filter
-    data_RF_phasors_cropped_ang_spec_filtered = data_RF_phasors_cropped_ang_spec_filtered .* filter_A_in_inv_pseudo;
+    data_RF_phasors_cropped_ang_spec_filtered = data_RF_phasors_cropped_ang_spec_filtered .* filter_A_in_inv_pseudo ./ axis_k_bp;
 
     % iterate axial positions
     for index_pos_z = 1:N_image_axis( 2 )
 
-%         % print progress in percent
-%         if mod( index_pos_z, 20 ) == 0
-%             fprintf( '%5.1f %%', ( index_pos_z - 1 ) / N_image_axis( 2 ) * 1e2 );
-%         end
+        % print progress in percent
+        if mod( index_pos_z, 50 ) == 0
+            fprintf( '%5.1f %%', ( index_pos_z - 1 ) / N_image_axis( 2 ) * 1e2 );
+        end
 
         %------------------------------------------------------------------
         % b) backpropagate filtered fields
         %------------------------------------------------------------------
-        % compute propagator
-        propagator = exp( 1j * axis_k_bp .* mat_k_z_norm * positions_z( index_pos_z ) ) ./ axis_k_bp;
+        % compute backpropagator
+        propagator = exp( 1j * axis_k_bp .* mat_k_z_norm * positions_z( index_pos_z ) );
 
+        % backpropagate
         gamma_kappa_recon_dft_shift = zeros( N_samples_f, N_points_dft_x );
         gamma_kappa_recon_dft_shift( indicator_propagable ) = data_RF_phasors_cropped_ang_spec_filtered( indicator_propagable ) .* propagator( indicator_propagable );
         gamma_kappa_recon_dft = ifftshift( gamma_kappa_recon_dft_shift, 2 );
 
         %------------------------------------------------------------------
-        % c) inverse transform
+        % c) inverse lateral Fourier transform
         %------------------------------------------------------------------
-        % interpolate backpropagated image in frequency domain
+        % lateral interpolation by zero insertion
         gamma_kappa_recon_interp_dft = zeros( N_samples_f, N_image_axis( 1 ) );
-
-        % zero insertion
-        gamma_kappa_recon_interp_dft( :, 1:(M_points_dft_x + 1) ) = gamma_kappa_recon_dft( :, 1:(M_points_dft_x + 1) );	
+        gamma_kappa_recon_interp_dft( :, 1:(M_points_dft_x + 1) ) = gamma_kappa_recon_dft( :, 1:(M_points_dft_x + 1) );
         gamma_kappa_recon_interp_dft( :, ( N_image_axis( 1 ) - M_points_dft_x + 1 ):end ) = gamma_kappa_recon_dft( :, (M_points_dft_x + 2):end );
 
         % phase of incident plane wave
@@ -309,10 +309,10 @@ for index_theta = 1:N_theta
         temp = fftshift( ifft( gamma_kappa_recon_interp_dft, [], 2 ), 2 ) .* phase_pw;
         gamma_kappa_recon_theta( index_pos_z, :, index_theta ) = sum( temp, 1 );
 
-%         % erase progress in percent
-%         if mod( index_pos_z, 20 ) == 0
-%             fprintf( '\b\b\b\b\b\b\b' );
-%         end
+        % erase progress in percent
+        if mod( index_pos_z, 50 ) == 0
+            fprintf( '\b\b\b\b\b\b\b' );
+        end
 
     end % for index_pos_z = 1:N_image_axis( 2 )
 

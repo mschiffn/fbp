@@ -16,7 +16,7 @@
 % -------------------------------------------------------------------------
 %   author: Martin F. Schiffner
 %   date: 2023-05-03
-%   modified: 2023-05-12
+%   modified: 2023-05-13
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% clear workspace
@@ -51,6 +51,19 @@ dynamic_range_dB = 60;
 % 1.) show results
 %--------------------------------------------------------------------------
 c_limits = [ -dynamic_range_dB, 0 ];
+
 figure( 1 );
-imagesc( positions_x, positions_z, 20 * log10( abs( image_compound ) / max( abs( image_compound( : ) ) ) ), c_limits );
+for index_theta = 1:numel( theta_incident )
+    subplot( 1, numel( theta_incident ), index_theta );
+    imagesc( positions_x * 1e3, positions_z * 1e3, 20 * log10( abs( images_single( :, :, index_theta ) ) / max( max( abs( images_single( :, :, index_theta ) ) ) ) ), c_limits );
+    title( sprintf( 'Steering angle: %.1f°', rad2deg( theta_incident( index_theta ) ) ) );
+    xlabel( 'Lateral position (mm)' );
+    ylabel( 'Axial position (mm)' );
+end
+
+figure( 2 );
+imagesc( positions_x * 1e3, positions_z * 1e3, 20 * log10( abs( image_compound ) / max( abs( image_compound( : ) ) ) ), c_limits );
+title( 'Coherent compounding' );
+xlabel( 'Lateral position (mm)' );
+ylabel( 'Axial position (mm)' );
 colormap gray;
