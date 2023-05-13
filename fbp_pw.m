@@ -1,4 +1,4 @@
-function [ gamma_kappa_recon, gamma_kappa_recon_theta, image_pos_x ] = fbp_pw( element_pitch, positions_z, data_RF, f_s, theta_incident, c_0, f_bounds, A_in_td, A_in_analy_threshold_dB, factor_interp, factor_zero_pad )
+function [ gamma_kappa_recon, gamma_kappa_recon_theta, image_pos_x ] = fbp_pw( element_pitch, positions_z, data_RF, f_s, theta_incident, c_0, f_bounds, F_number, A_in_td, A_in_analy_threshold_dB, factor_interp, factor_zero_pad )
 %
 % Filtered backpropagation (FBP) algorithm for
 % the RF data obtained from
@@ -12,7 +12,8 @@ function [ gamma_kappa_recon, gamma_kappa_recon_theta, image_pos_x ] = fbp_pw( e
 % multiple sequential pulse-echo measurements.
 % The FBP algorithm recovers
 % the relative spatial fluctuations in
-% compressibility.
+% compressibility under
+% the Born approximation.
 %
 % minimal usage:
 % gamma_kappa_recon = fbp_pw( element_pitch, positions_z, data_RF, f_s, theta_incident, c_0 );
@@ -29,10 +30,11 @@ function [ gamma_kappa_recon, gamma_kappa_recon_theta, image_pos_x ] = fbp_pw( e
 %
 % OPTIONAL
 %   07.) f_bounds:         frequency bounds (Hz)
-%   08.) A_in_td:          incident pulse (waveform of incident PW)
-%   09.) A_in_analy_threshold_dB: threshold for pseudo-inverse filter in dB (used for deconvolution with A_in_td)
-%   10.) factor_interp:
-%   11.) factor_zero_pad:
+%   08.) F_number:         F-number (1)
+%   09.) A_in_td:          incident pulse (waveform of incident PW)
+%   10.) A_in_analy_threshold_dB: threshold for pseudo-inverse filter in dB (used for deconvolution with A_in_td)
+%   11.) factor_interp:
+%   12.) factor_zero_pad:
 %
 % -------------------------------------------------------------------------
 % OUTPUTS:
@@ -65,7 +67,7 @@ function [ gamma_kappa_recon, gamma_kappa_recon_theta, image_pos_x ] = fbp_pw( e
 % -------------------------------------------------------------------------
 %   author: Martin F. Schiffner
 %   date: 2013-01-26
-%   modified: 2023-05-12
+%   modified: 2023-05-13
 
 % print status
 time_start = tic;
@@ -75,8 +77,8 @@ fprintf( '\t %s: Filtered Backpropagation (FBP) [ steered plane wave ]...\n', st
 %--------------------------------------------------------------------------
 % 1.) check arguments
 %--------------------------------------------------------------------------
-% ensure at least 6 and at most 11 arguments
-narginchk( 6, 11 );
+% ensure at least 6 and at most 12 arguments
+narginchk( 6, 12 );
 
 % ensure positive element_pitch
 mustBePositive( element_pitch );
@@ -112,23 +114,28 @@ if nargin < 7 || isempty( f_bounds )
     f_bounds = [ 0, f_s / 2 ];
 end
 
+% ensure existence of nonempty F_number
+if nargin < 8 || isempty( F_number )
+    F_number = 0;
+end
+
 % ensure existence of nonempty A_in_td
-if nargin < 8 || isempty( A_in_td )
+if nargin < 9 || isempty( A_in_td )
     A_in_td = 1;
 end
 
 % ensure existence of nonempty A_in_analy_threshold_dB
-if nargin < 9 || isempty( A_in_analy_threshold_dB )
+if nargin < 10 || isempty( A_in_analy_threshold_dB )
     A_in_analy_threshold_dB = 6;
 end
 
 % ensure existence of nonempty factor_interp
-if nargin < 10 || isempty( factor_interp )
+if nargin < 11 || isempty( factor_interp )
     factor_interp = 4;
 end
 
 % ensure existence of nonempty factor_zero_pad
-if nargin < 11 || isempty( factor_zero_pad )
+if nargin < 12 || isempty( factor_zero_pad )
     factor_zero_pad = 2;
 end
 
@@ -196,8 +203,8 @@ axis_k_x = 2 * pi * (-M_points_dft_x:M_points_dft_x) / ( N_points_dft_x * elemen
 mat_k_x_norm = axis_k_x ./ axis_k_bp;
 mat_k_z_norm = sqrt( 1 - mat_k_x_norm.^2 );
 
-% propagable plane waves (PWs)
-indicator_propagable = abs( mat_k_x_norm ) < 1;
+% angular aperture
+indicator_propagable = abs( mat_k_x_norm ) < 1 / sqrt( 1 + ( 2 * F_number )^2 );
 
 % compute frequency-continuous angular spectrum (correct phase shift caused by pos_rx_x(1) ~= 0)
 data_RF_phasors_cropped_ang_spec = fft( data_RF_phasors_cropped, N_points_dft_x, 2 ) * element_pitch / sqrt( N_points_dft_x );
