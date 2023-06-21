@@ -25,6 +25,16 @@ the filtered backpropagation
 [[2]](#DevaneyUI1982) for
 coherent plane-wave compounding.
 
+## Background
+
+The filtered backpropagation (FBP) derives from
+the Fourier diffraction theorem for
+steered plane waves.
+This theorem resembles the Fourier slice theorem.
+The algorithm operates in
+the two-dimensional space under
+the Born approximation.
+
 ## :gear: Getting Started
 
 1. Clone the repository or download the release to your local hard drive.

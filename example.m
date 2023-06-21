@@ -1,22 +1,24 @@
 % exemplary application of
-% the filtered backpropagation (FBP) algorithm
+% the filtered backpropagation (FBP) for
+% steered plane waves and
+% the two-dimensional space
 %
 % -------------------------------------------------------------------------
 % REFERENCES:
 % -------------------------------------------------------------------------
 %   [1] M. F. Schiffner and G. Schmitz, “Plane wave pulse-echo ultrasound diffraction tomography with a fixed linear transducer array,” in
 %       Acoust. Imaging, ser. Acoust. Imaging, A. Nowicki, J. Litniewski, and T. Kujawska, Eds., vol. 31, Springer Netherlands, 2012, pp. 19–30.
-%       DOI : 10.1007/978-94-007-2619-2_3
+%       DOI : <a href="matlab:web('https://dx.doi.org/10.1007/978-94-007-2619-2_3')">10.1007/978-94-007-2619-2_3</a>
 %   [2] A. J. Devaney, “A filtered backpropagation algorithm for diffraction tomography,”
 %       Ultrasonic Imaging, vol. 4, no. 4, pp. 336–350, Oct. 1982.
-%       DOI : 10.1016/0161-7346(82)90017-7
+%       DOI : <a href="matlab:web('https://dx.doi.org/10.1016/0161-7346(82)90017-7')">10.1016/0161-7346(82)90017-7</a>
 %
 % -------------------------------------------------------------------------
 % ABOUT:
 % -------------------------------------------------------------------------
 %   author: Martin F. Schiffner
 %   date: 2023-05-03
-%   modified: 2023-05-13
+%   modified: 2023-06-21
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% clear workspace
@@ -59,6 +61,7 @@ for index_theta = 1:numel( theta_incident )
     title( sprintf( 'Steering angle: %.1f°', rad2deg( theta_incident( index_theta ) ) ) );
     xlabel( 'Lateral position (mm)' );
     ylabel( 'Axial position (mm)' );
+    colormap gray;
 end
 
 figure( 2 );
